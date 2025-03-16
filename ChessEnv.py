@@ -104,7 +104,12 @@ class ChessEnv:
         else:
             # Mate evaluation
             mate_in = evaluation["value"]
-            if mate_in > 0:
+            if mate_in == 0:
+                # Handle the edge case where mate_in is 0
+                # This could indicate an immediate mate (checkmate on the board)
+                # or potentially an error condition
+                return 10.0 if self.board.turn == chess.BLACK else -10.0  # Immediate mate for the side that just moved
+            elif mate_in > 0:
                 return 9.0 + (1.0 / mate_in)  # Positive for white winning
             else:
                 return -9.0 - (1.0 / mate_in)  # Negative for black winning
@@ -206,14 +211,14 @@ class ChessEnv:
 
 
 # Example usage
-stockfish_path = "/Users/kevin/stockfish/stockfish-windows-x86-64-avx2.exe" # Change this to your path to stockfish
+stockfish_path = "/Users/kaust/stockfish/stockfish-windows-x86-64-avx2.exe" # Change this to your path to stockfish
 env = ChessEnv(stockfish_path)
 state = env.reset()
 print(state)
 print("")
 
 # Example of a step
-action = env.get_random_action()
+action = state.parse_san('d4')
 if action:
     next_state, reward, done, info = env.step(action)
     print(f"Action: {action}, Reward: {reward}, Done: {done}")
