@@ -5,26 +5,145 @@ import torch
 import torch.nn.functional as F
 from typing import Dict, Optional
 import time
+import tensorflow as tf
 from ChessEnv import ChessEnv
+import random
+
+# Load CNN model
+model_path = 'chess_cnn_model.h5'
+cnn_model = None
+
+try:
+    cnn_model = tf.keras.models.load_model(model_path, compile=False)
+    print("CNN model loaded successfully (without compilation).")
+    
+    # Recompile with a supported optimizer
+    from tensorflow.keras.optimizers import Adam
+    cnn_model.compile(
+        optimizer=Adam(learning_rate=0.001),  
+        loss="mse",
+        metrics=["mae"]
+    )
+except Exception as e:
+    print(f"Error loading or compiling CNN model: {e}")
+    print("Will use SimpleChessEvaluator as fallback.")
+
+# Add the split_dims function
+squares_index = {
+    'a': 0,
+    'b': 1,
+    'c': 2,
+    'd': 3,
+    'e': 4,
+    'f': 5,
+    'g': 6,
+    'h': 7
+}
+
+def square_to_index(square):
+    letter = chess.square_name(square)
+    return 8 - int(letter[1]), squares_index[letter[0]]
+
+def split_dims(board):
+    # Create a 3D matrix
+    board3d = np.zeros((14, 8, 8), dtype=np.int8)
+
+    # Add pieces view on the matrix
+    for piece in chess.PIECE_TYPES:
+        for square in board.pieces(piece, chess.WHITE):
+            idx = np.unravel_index(square, (8, 8))
+            board3d[piece - 1][7 - idx[0]][idx[1]] = 1
+        for square in board.pieces(piece, chess.BLACK):
+            idx = np.unravel_index(square, (8, 8))
+            board3d[piece + 5][7 - idx[0]][idx[1]] = 1
+
+    # Add attacks and valid moves
+    aux = board.turn
+    board.turn = chess.WHITE
+
+    for move in board.legal_moves:
+        i, j = square_to_index(move.to_square)
+        board3d[12][i][j] = 1
+
+    board.turn = chess.BLACK
+
+    for move in board.legal_moves:
+        i, j = square_to_index(move.to_square)
+        board3d[13][i][j] = 1
+
+    board.turn = aux
+
+    return board3d
+
 
 class ChessCNN:
-    """Placeholder for your CNN implementation"""
-    def __init__(self):
-        # Your CNN architecture definition here
-        pass
-        
-    def predict(self, board_tensor):
-        # Your forward pass implementation
-        pass
+    """CNN-based position evaluator"""
+    def __init__(self, model_path=None):
+        # Initialize with either a path or use global model
+        if model_path and isinstance(model_path, str):
+            try:
+                self.model = tf.keras.models.load_model(model_path, compile=False)
+                # Recompile with a supported optimizer
+                self.model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+                    loss="mse",
+                    metrics=["mae"]
+                )
+                print(f"Model loaded from {model_path}")
+            except Exception as e:
+                print(f"Error loading model from {model_path}: {e}")
+                self.model = None
+        else:
+            # Use global model if available
+            self.model = cnn_model
+            print("Using global CNN model")
+    
+    def predict(self, board):
+        """Evaluate chess position using CNN model"""
+        if self.model is None:
+            print("Model not loaded correctly")
+            return 0.0
+            
+        try:
+            # Convert board to CNN input format if it's a chess.Board object
+            if isinstance(board, chess.Board):
+                board_tensor = split_dims(board)
+            else:
+                board_tensor = board
+            
+            # Make sure board tensor has correct shape for model input
+            if len(board_tensor.shape) == 3:  # If it's missing batch dimension
+                board_tensor = np.expand_dims(board_tensor, axis=0)
+                
+            # Convert to float32 for model input
+            board_tensor = board_tensor.astype(np.float32)
+            
+            # Get raw evaluation from model with verbose=0 to suppress progress bar
+            raw_eval = self.model.predict(board_tensor, verbose=0)[0][0]
+            
+            # Scale to [-10, 10] range based on tanh activation in output layer
+            scaled_eval = raw_eval * 10.0
+            
+            # Return the evaluation with clamping for safety
+            return max(-10.0, min(10.0, scaled_eval))
+        except Exception as e:
+            print(f"Error during prediction: {e}")
+            return 0.0
 
 def encode_board(board: chess.Board) -> torch.Tensor:
     """
     Convert chess board to tensor representation for CNN input.
-    This is a placeholder - you'll need to implement based on your CNN's requirements.
+    
+    Args:
+        board: Chess board to encode
+        
+    Returns:
+        Tensor representation of the board
     """
-    # Implementation depends on your CNN's expected input format
-    # Example implementation shown in previous response
-    pass
+    board3d = split_dims(board)
+
+    return board3d
+
 
 class MCTSNode:
     """Node in the MCTS tree."""
@@ -135,9 +254,10 @@ class MCTSNode:
 
 class ChessMCTS:
     """Monte Carlo Tree Search with CNN policy network."""
-    def __init__(self, env: ChessEnv, cnn_model, exploration_weight=1.41, simulation_limit=100, time_limit=5.0):
-        self.env = env
-        self.cnn_model = cnn_model
+    def __init__(self, env: ChessEnv = None, evaluator = None, exploration_weight=1.41, 
+                 simulation_limit=100, time_limit=5.0):
+        self.env = env  # Can be None
+        self.evaluator = evaluator  # Can be ChessCNN, SimpleChessEvaluator, or None
         self.exploration_weight = exploration_weight
         self.simulation_limit = simulation_limit
         self.time_limit = time_limit
@@ -145,7 +265,8 @@ class ChessMCTS:
     
     def get_policy_priors(self, board: chess.Board) -> Dict[chess.Move, float]:
         """
-        Get move probabilities from CNN policy network.
+        Get move probabilities from evaluator.
+        This is a simplified version that assigns equal probabilities to all moves.
         
         Args:
             board: Current chess board
@@ -153,28 +274,13 @@ class ChessMCTS:
         Returns:
             Dictionary mapping legal moves to their prior probabilities
         """
-        # Encode board for CNN input
-        board_tensor = encode_board(board)
-        
-        # Get policy predictions from CNN
-        with torch.no_grad():
-            logits = self.cnn_model.predict(board_tensor)
-        
-        # Map outputs to legal moves
         legal_moves = list(board.legal_moves)
         move_probs = {}
         
-        # TODO: May have to change this depending on CNN implementations
+        # Simple approach: assign equal probability to all moves
+        prob = 1.0 / len(legal_moves) if legal_moves else 0.0
         for move in legal_moves:
-            # Get probability for this move from CNN output
-            move_index = self._get_move_index(move)  # Helper to map move to index in CNN output
-            move_probs[move] = logits[move_index].item()
-        
-        # Normalize probabilities
-        if move_probs:
-            total = sum(move_probs.values())
-            if total > 0:
-                move_probs = {m: p/total for m, p in move_probs.items()}
+            move_probs[move] = prob
         
         return move_probs
     
@@ -183,7 +289,11 @@ class ChessMCTS:
         Helper method to map a chess move to its index in the CNN output.
         """
         # TODO: implement after CNN is complete
-        pass
+        from_square = move.from_square
+        to_square = move.to_square
+        # There are 64 squares, so from_square * 64 + to_square gives a unique index
+        # This creates a space of 64*64=4096 possible moves (though many are invalid)
+        return from_square * 64 + to_square
     
     def select_child(self, node: MCTSNode) -> MCTSNode:
         """
@@ -271,48 +381,69 @@ class ChessMCTS:
         move_limit = 100  # Prevent infinite games
         move_count = 0
         
+        # Get evaluator for this simulation
+        evaluator = self.cnn_model if hasattr(self, 'cnn_model') else self.evaluator
+        
         while not sim_board.is_game_over() and move_count < move_limit:
-            # Get move probabilities from policy network
-            board_tensor = encode_board(sim_board)
-            with torch.no_grad():
-                logits = self.cnn_model.predict(board_tensor)
-            
-            # Select moves based on policy probabilities
+            # Get legal moves
             legal_moves = list(sim_board.legal_moves)
             if not legal_moves:
                 break
-                
-            # Get probabilities for legal moves only
-            legal_move_indices = [self._get_move_index(move) for move in legal_moves]
-            legal_move_probs = logits[legal_move_indices].softmax(dim=0).numpy()
             
-            # Select move (you can use temperature parameter to control exploration)
-            selected_idx = np.random.choice(len(legal_moves), p=legal_move_probs)
-            move = legal_moves[selected_idx]
+            # Select move (simple approach - either use evaluator or random)
+            if random.random() < 0.8:  # 80% use evaluator logic, 20% random
+                # Simple approach: evaluate each move and choose probabilistically
+                move_values = []
+                for move in legal_moves:
+                    # Make the move
+                    sim_board.push(move)
+                    # Evaluate the position
+                    if hasattr(evaluator, 'evaluate'):
+                        value = evaluator.evaluate(sim_board)
+                    else:
+                        # Fallback to a random value
+                        value = random.random() * 2 - 1  # Value between -1 and 1
+                    # Undo the move
+                    sim_board.pop()
+                    
+                    # Store the value
+                    move_values.append((move, value))
                 
+                # Convert values to probabilities (higher value = higher probability)
+                values = np.array([v for _, v in move_values])
+                # Apply softmax with temperature
+                temperature = 1.0
+                values = np.exp(values / temperature)
+                probabilities = values / np.sum(values)
+                
+                # Choose move based on probabilities
+                move_idx = np.random.choice(len(legal_moves), p=probabilities)
+                move = legal_moves[move_idx]
+            else:
+                # Choose a random move
+                move = random.choice(legal_moves)
+            
             # Apply the selected move
             sim_board.push(move)
             move_count += 1
         
-        # Process game result as in your original code
+        # Process game result
         if sim_board.is_game_over():
             outcome = sim_board.outcome()
-            if outcome.winner == chess.WHITE:
-                return {chess.WHITE: 1.0, chess.BLACK: 0.0, 'draw': 0.0}
-            elif outcome.winner == chess.BLACK:
-                return {chess.WHITE: 0.0, chess.BLACK: 1.0, 'draw': 0.0}
-            else:  # Draw
+            if outcome is None:
+                # Draw
                 return {chess.WHITE: 0.5, chess.BLACK: 0.5, 'draw': 1.0}
+            elif outcome.winner == chess.WHITE:
+                return {chess.WHITE: 1.0, chess.BLACK: 0.0, 'draw': 0.0}
+            else:  # Black wins
+                return {chess.WHITE: 0.0, chess.BLACK: 1.0, 'draw': 0.0}
         else:
-            # If move limit was reached, use the Stockfish evaluation
-            original_fen = self.env.board.fen()
-            self.env.board = sim_board.copy()
-            self.env.stockfish.set_fen_position(sim_board.fen())
-            evaluation = self.env.evaluate_position()
-            
-            # Restore original board
-            self.env.board = chess.Board(original_fen)
-            self.env.stockfish.set_fen_position(original_fen)
+            # If move limit was reached, use the evaluation
+            if hasattr(evaluator, 'evaluate'):
+                evaluation = evaluator.evaluate(sim_board)
+            else:
+                # Fallback to a simple evaluator
+                evaluation = 0.0  # Neutral evaluation
             
             # Convert evaluation to result probabilities
             white_score = min(max((evaluation + 10) / 20, 0), 1)
@@ -387,3 +518,36 @@ class ChessMCTS:
         print(f"Selected move: {best_move}, visits: {self.root.children[best_move].visits}")
 
         return best_move
+
+
+# Simple test code
+if __name__ == "__main__":
+    # Create a board
+    board = chess.Board()
+    
+    # Create a CNN evaluator
+    cnn_evaluator = ChessCNN()
+    
+    # Test evaluation
+    print("Testing CNN evaluation:")
+    try:
+        evaluation = cnn_evaluator.predict(board)
+        print(f"Initial position evaluation: {evaluation}")
+    except Exception as e:
+        print(f"Error during evaluation: {e}")
+    
+    # Create MCTS
+    mcts = ChessMCTS(evaluator=cnn_evaluator, simulation_limit=10, time_limit=2.0)
+    
+    # Test search
+    print("\nTesting MCTS search:")
+    try:
+        best_move = mcts.search(board)
+        print(f"Best move found: {best_move}")
+        
+        # Make the move
+        board.push(best_move)
+        print("\nBoard after move:")
+        print(board)
+    except Exception as e:
+        print(f"Error during search: {e}")
