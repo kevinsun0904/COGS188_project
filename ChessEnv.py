@@ -13,7 +13,7 @@ class ChessEnv:
     that uses python-chess as the underlying chess engine and python-stockfish for position evaluation.
     """
 
-    def __init__(self, stockfish_path: str, stockfish_params: Dict = None, max_steps: int = 100, stockfish_depth: int = 10):
+    def __init__(self, stockfish_path: str, stockfish_params: Dict = None, stockfish_depth: int = 10):
         """
         Initialize the chess environment with Stockfish integration using the Python package.
 
@@ -21,11 +21,9 @@ class ChessEnv:
             stockfish_path: Path to the Stockfish executable.
             stockfish_params: Dictionary of parameters for the Stockfish engine.
                 If None, default parameters will be used.
-            max_steps: Maximum number of steps before the game is considered a draw.
             stockfish_depth: Depth for Stockfish evaluation.
         """
         self.board = chess.Board()
-        self.max_steps = max_steps
         self.stockfish_depth = stockfish_depth
         self.steps = 0
         self.done = False
@@ -104,12 +102,7 @@ class ChessEnv:
         else:
             # Mate evaluation
             mate_in = evaluation["value"]
-            if mate_in == 0:
-                # Handle the edge case where mate_in is 0
-                # This could indicate an immediate mate (checkmate on the board)
-                # or potentially an error condition
-                return 10.0 if self.board.turn == chess.BLACK else -10.0  # Immediate mate for the side that just moved
-            elif mate_in > 0:
+            if mate_in > 0:
                 return 9.0 + (1.0 / mate_in)  # Positive for white winning
             else:
                 return -9.0 - (1.0 / mate_in)  # Negative for black winning
@@ -165,11 +158,6 @@ class ChessEnv:
             player_perspective = 1 if self.board.turn == chess.BLACK else -1
             reward = player_perspective * (eval_after - eval_before)
 
-            # Terminate when max steps are reached
-            if self.steps >= self.max_steps:
-                self.done = True
-                reward = 0.0 
-
         info = {
             "steps": self.steps,
             "result": self.result,
@@ -208,21 +196,40 @@ class ChessEnv:
             String representation of the board.
         """
         return str(self.board)
+    
+    def copy(self) -> 'ChessEnv':
+        """
+        Create a deep copy of the ChessEnv instance.
+
+        Returns:
+            A deep copy of the ChessEnv.
+        """
+        new_env = ChessEnv(
+            stockfish_path=self.stockfish._path,
+            stockfish_params=self.stockfish._parameters,
+            stockfish_depth=self.stockfish_depth,
+        )
+        new_env.board = self.board.copy()
+        new_env.steps = self.steps
+        new_env.done = self.done
+        new_env.result = self.result
+        new_env.stockfish.set_fen_position(new_env.board.fen())
+        return new_env
 
 
 # Example usage
-stockfish_path = "/Users/kaust/stockfish/stockfish-windows-x86-64-avx2.exe" # Change this to your path to stockfish
-env = ChessEnv(stockfish_path)
-state = env.reset()
-print(state)
-print("")
+# stockfish_path = "/Users/kevin/stockfish/stockfish-windows-x86-64-avx2.exe" # Change this to your path to stockfish
+# env = ChessEnv(stockfish_path)
+# state = env.reset()
+# print(state)
+# print("")
 
-# Example of a step
-action = state.parse_san('d4')
-if action:
-    next_state, reward, done, info = env.step(action)
-    print(f"Action: {action}, Reward: {reward}, Done: {done}")
-    print(next_state)
-else:
-    print("No legal moves available.")
-env.close()
+# # Example of a step
+# action = env.get_random_action()
+# if action:
+#     next_state, reward, done, info = env.step(action)
+#     print(f"Action: {action}, Reward: {reward}, Done: {done}")
+#     print(next_state)
+# else:
+#     print("No legal moves available.")
+# env.close()
