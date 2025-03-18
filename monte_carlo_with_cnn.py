@@ -584,7 +584,7 @@ if __name__ == "__main__":
         print(f"Error during evaluation: {e}")
     
     # Create MCTS
-    mcts = ChessMCTS(evaluator=cnn_evaluator, simulation_limit=50, time_limit=2.0)
+    mcts = ChessMCTS(evaluator=cnn_evaluator, simulation_limit=1000, time_limit=20.0)
     
     # Number of moves to play (or set max_moves=None to play until game over)
     max_moves = None
