@@ -266,8 +266,7 @@ class ChessMCTS:
     
     def get_policy_priors(self, board: chess.Board) -> Dict[chess.Move, float]:
         """
-        Get move probabilities from evaluator.
-        This is a simplified version that assigns equal probabilities to all moves.
+        Get move probabilities from CNN evaluator.
         
         Args:
             board: Current chess board
@@ -276,12 +275,51 @@ class ChessMCTS:
             Dictionary mapping legal moves to their prior probabilities
         """
         legal_moves = list(board.legal_moves)
+        if not legal_moves:
+            return {}
+            
         move_probs = {}
+        move_evals = []
         
-        # Simple approach: assign equal probability to all moves
-        prob = 1.0 / len(legal_moves) if legal_moves else 0.0
-        for move in legal_moves:
-            move_probs[move] = prob
+        # If we have an evaluator, use it to evaluate each move
+        if self.evaluator is not None:
+            for move in legal_moves:
+                # Make the move on a copy of the board
+                board_copy = board.copy()
+                board_copy.push(move)
+                
+                # Get evaluation for this position
+                if hasattr(self.evaluator, 'predict'):
+                    # Negate because we're evaluating after our move (opponent's perspective)
+                    eval_score = -self.evaluator.predict(board_copy)
+                elif hasattr(self.evaluator, 'evaluate'):
+                    eval_score = -self.evaluator.evaluate(board_copy)
+                else:
+                    # Default to equal probability
+                    eval_score = 0
+                    
+                move_evals.append((move, eval_score))
+            
+            # Convert evaluations to probabilities using softmax
+            if move_evals:
+                evals = np.array([e for _, e in move_evals])
+                
+                # Scale evaluations to avoid numerical issues with softmax
+                evals = evals - np.max(evals)
+                
+                # Apply softmax with temperature
+                temperature = 1.0  # Adjust this as needed
+                exps = np.exp(evals / temperature)
+                probs = exps / np.sum(exps)
+                
+                # Create dictionary with moves and their probabilities
+                for i, (move, _) in enumerate(move_evals):
+                    move_probs[move] = float(probs[i])
+        else:
+            # Default: equal probabilities if no evaluator
+            prob = 1.0 / len(legal_moves)
+            for move in legal_moves:
+                move_probs[move] = prob
         
         return move_probs
     
@@ -366,91 +404,99 @@ class ChessMCTS:
         return child
     
     def _policy_simulation(self, board: chess.Board) -> Dict[chess.Color, float]:
-        """
-        Run a simulation using the policy network.
-        
-        Args:
-            board: Current board state to simulate from
+            """
+            Run a simulation using the policy network.
             
-        Returns:
-            Dictionary with simulation results
-        """
-        # Copy the board to avoid modifying the original
-        sim_board = board.copy()
-        
-        # Run simulation until game is over or move limit reached
-        move_limit = 100  # Prevent infinite games
-        move_count = 0
-        
-        # Get evaluator for this simulation
-        evaluator = self.cnn_model if hasattr(self, 'cnn_model') else self.evaluator
-        
-        while not sim_board.is_game_over() and move_count < move_limit:
-            # Get legal moves
-            legal_moves = list(sim_board.legal_moves)
-            if not legal_moves:
-                break
+            Args:
+                board: Current board state to simulate from
+                
+            Returns:
+                Dictionary with simulation results
+            """
+            # Copy the board to avoid modifying the original
+            sim_board = board.copy()
             
-            # Select move (simple approach - either use evaluator or random)
-            if random.random() < 0.8:  # 80% use evaluator logic, 20% random
-                # Simple approach: evaluate each move and choose probabilistically
-                move_values = []
-                for move in legal_moves:
-                    # Make the move
-                    sim_board.push(move)
-                    # Evaluate the position
-                    if hasattr(evaluator, 'evaluate'):
-                        value = evaluator.evaluate(sim_board)
-                    else:
-                        # Fallback to a random value
-                        value = random.random() * 2 - 1  # Value between -1 and 1
-                    # Undo the move
-                    sim_board.pop()
+            # Run simulation until game is over or move limit reached
+            move_limit = 100  # Prevent infinite games
+            move_count = 0
+            
+            # Get evaluator for this simulation
+            evaluator = self.cnn_model if hasattr(self, 'cnn_model') else self.evaluator
+            
+            while not sim_board.is_game_over() and move_count < move_limit:
+                # Get legal moves
+                legal_moves = list(sim_board.legal_moves)
+                if not legal_moves:
+                    break
+                
+                # Select move (simple approach - either use evaluator or random)
+                if random.random() < 0.8:  # 80% use evaluator logic, 20% random
+                    # Simple approach: evaluate each move and choose probabilistically
+                    move_values = []
+                    for move in legal_moves:
+                        # Make the move
+                        sim_board.push(move)
+                        # Evaluate the position
+                        # Use predict method if available (ChessCNN uses predict)
+                        if hasattr(evaluator, 'predict'):
+                            value = evaluator.predict(sim_board)
+                        # Fallback to evaluate method if it exists
+                        elif hasattr(evaluator, 'evaluate'):
+                            value = evaluator.evaluate(sim_board)
+                        else:
+                            # Fallback to a random value
+                            value = random.random() * 2 - 1  # Value between -1 and 1
+                        # Undo the move
+                        sim_board.pop()
+                        
+                        # Store the value
+                        move_values.append((move, value))
                     
-                    # Store the value
-                    move_values.append((move, value))
+                    # Convert values to probabilities (higher value = higher probability)
+                    values = np.array([v for _, v in move_values])
+                    # Apply softmax with temperature
+                    temperature = 1.0
+                    values = np.exp(values / temperature)
+                    probabilities = values / np.sum(values)
+                    
+                    # Choose move based on probabilities
+                    move_idx = np.random.choice(len(legal_moves), p=probabilities)
+                    move = legal_moves[move_idx]
+                else:
+                    # Choose a random move
+                    move = random.choice(legal_moves)
                 
-                # Convert values to probabilities (higher value = higher probability)
-                values = np.array([v for _, v in move_values])
-                # Apply softmax with temperature
-                temperature = 1.0
-                values = np.exp(values / temperature)
-                probabilities = values / np.sum(values)
+                # Apply the selected move
+                sim_board.push(move)
+                move_count += 1
+            
+            # Process game result
+            if sim_board.is_game_over():
+                outcome = sim_board.outcome()
+                if outcome is None:
+                    # Draw
+                    return {chess.WHITE: 0.5, chess.BLACK: 0.5, 'draw': 1.0}
+                elif outcome.winner == chess.WHITE:
+                    return {chess.WHITE: 1.0, chess.BLACK: 0.0, 'draw': 0.0}
+                else:  # Black wins
+                    return {chess.WHITE: 0.0, chess.BLACK: 1.0, 'draw': 0.0}
+            else:
+                # If move limit was reached, use the evaluation
+                # Use predict method if available (ChessCNN uses predict)
+                if hasattr(evaluator, 'predict'):
+                    evaluation = evaluator.predict(sim_board)
+                # Fallback to evaluate method if it exists
+                elif hasattr(evaluator, 'evaluate'):
+                    evaluation = evaluator.evaluate(sim_board)
+                else:
+                    # Fallback to a simple evaluator
+                    evaluation = 0.0  # Neutral evaluation
                 
-                # Choose move based on probabilities
-                move_idx = np.random.choice(len(legal_moves), p=probabilities)
-                move = legal_moves[move_idx]
-            else:
-                # Choose a random move
-                move = random.choice(legal_moves)
-            
-            # Apply the selected move
-            sim_board.push(move)
-            move_count += 1
-        
-        # Process game result
-        if sim_board.is_game_over():
-            outcome = sim_board.outcome()
-            if outcome is None:
-                # Draw
-                return {chess.WHITE: 0.5, chess.BLACK: 0.5, 'draw': 1.0}
-            elif outcome.winner == chess.WHITE:
-                return {chess.WHITE: 1.0, chess.BLACK: 0.0, 'draw': 0.0}
-            else:  # Black wins
-                return {chess.WHITE: 0.0, chess.BLACK: 1.0, 'draw': 0.0}
-        else:
-            # If move limit was reached, use the evaluation
-            if hasattr(evaluator, 'evaluate'):
-                evaluation = evaluator.evaluate(sim_board)
-            else:
-                # Fallback to a simple evaluator
-                evaluation = 0.0  # Neutral evaluation
-            
-            # Convert evaluation to result probabilities
-            white_score = min(max((evaluation + 10) / 20, 0), 1)
-            black_score = 1 - white_score
-            
-            return {chess.WHITE: white_score, chess.BLACK: black_score, 'draw': 0.0}
+                # Convert evaluation to result probabilities
+                white_score = min(max((evaluation + 10) / 20, 0), 1)
+                black_score = 1 - white_score
+                
+                return {chess.WHITE: white_score, chess.BLACK: black_score, 'draw': 0.0}
     
     def search(self, board: chess.Board) -> chess.Move:
         """
@@ -538,17 +584,57 @@ if __name__ == "__main__":
         print(f"Error during evaluation: {e}")
     
     # Create MCTS
-    mcts = ChessMCTS(evaluator=cnn_evaluator, simulation_limit=10, time_limit=2.0)
+    mcts = ChessMCTS(evaluator=cnn_evaluator, simulation_limit=50, time_limit=2.0)
     
-    # Test search
-    print("\nTesting MCTS search:")
-    try:
-        best_move = mcts.search(board)
-        print(f"Best move found: {best_move}")
+    # Number of moves to play (or set max_moves=None to play until game over)
+    max_moves = None
+    move_count = 0
+    
+    print("\nStarting game:")
+    print(board)
+    
+    # Play the game until it's over or we reach max_moves
+    while not board.is_game_over() and (max_moves is None or move_count < max_moves):
+        move_count += 1
+        print(f"\nMove {move_count}:")
         
-        # Make the move
-        board.push(best_move)
-        print("\nBoard after move:")
-        print(board)
-    except Exception as e:
-        print(f"Error during search: {e}")
+        # Get whose turn it is
+        side = "White" if board.turn == chess.WHITE else "Black"
+        print(f"{side} to move")
+        
+        # Search for the best move
+        start_time = time.time()
+        try:
+            best_move = mcts.search(board)
+            search_time = time.time() - start_time
+            
+            print(f"Best move found: {best_move} (search time: {search_time:.2f}s)")
+            
+            # Make the move
+            board.push(best_move)
+            print("\nBoard after move:")
+            print(board)
+            
+            # Evaluate the new position
+            try:
+                evaluation = cnn_evaluator.predict(board)
+                print(f"Position evaluation: {evaluation:.2f}")
+            except Exception as e:
+                print(f"Error during evaluation: {e}")
+                
+        except Exception as e:
+            print(f"Error during search: {e}")
+            break
+    
+    # Print game result
+    if board.is_game_over():
+        outcome = board.outcome()
+        if outcome.winner == chess.WHITE:
+            print("\nGame over: White wins!")
+        elif outcome.winner == chess.BLACK:
+            print("\nGame over: Black wins!")
+        else:
+            print("\nGame over: Draw!")
+        print(f"Termination: {outcome.termination}")
+    else:
+        print(f"\nGame stopped after {move_count} moves")
