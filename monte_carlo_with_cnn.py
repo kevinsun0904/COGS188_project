@@ -193,15 +193,16 @@ class MCTSNode:
         """
         if self.visits == 0:
             return float('inf')  # Prioritize unexplored nodes
-        
-        # Exploitation term
-        wins = self.results[chess.WHITE] if self.board.turn == chess.WHITE else self.results[chess.BLACK]
-        exploitation = wins / self.visits
+
+        if self.parent and self.parent.board.turn == chess.WHITE:
+            win_ratio = self.results[chess.WHITE] / self.visits
+        else:
+            win_ratio = self.results[chess.BLACK] / self.visits
         
         # Exploration term
         exploration = exploration_weight * math.sqrt(math.log(parent_visits) / self.visits)
         
-        return exploitation + exploration
+        return win_ratio + exploration
     
     def select_child(self, exploration_weight: float = 1.41) -> 'MCTSNode':
         """Select the child with the highest UCB score."""

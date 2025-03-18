@@ -48,30 +48,22 @@ class MCTSNode:
         else:
             return 0.0
     
-    def get_ucb_score(self, parent_visits: int, exploration_weight: float = 1.41) -> float:
-        """
-        Calculate the UCB score for this node.
-        
-        Args:
-            parent_visits: Number of visits to the parent node
-            exploration_weight: Controls exploration vs exploitation
-            
-        Returns:
-            UCB score value
-        """
+    def get_ucb_score(self, parent_visits: int, exploration_weight: float = 2.0) -> float:
         if self.visits == 0:
             return float('inf')  # Prioritize unexplored nodes
-        
-        # Exploitation term
-        wins = self.results[chess.WHITE] if self.board.turn == chess.WHITE else self.results[chess.BLACK]
-        exploitation = wins / self.visits
+
+        # Correctly calculate exploitation term from the current player's perspective
+        if self.parent and self.parent.board.turn == chess.WHITE:
+            win_ratio = self.results[chess.WHITE] / self.visits
+        else:
+            win_ratio = self.results[chess.BLACK] / self.visits
         
         # Exploration term
         exploration = exploration_weight * math.sqrt(math.log(parent_visits) / self.visits)
         
-        return exploitation + exploration
+        return win_ratio + exploration
     
-    def select_child(self, exploration_weight: float = 1.41) -> 'MCTSNode':
+    def select_child(self, exploration_weight: float = 2.0) -> 'MCTSNode':
         """Select the child with the highest UCB score."""
         if not self.children:
             raise ValueError("Cannot select child from a node with no children")
@@ -284,12 +276,12 @@ def test_mcts():
     
     mcts = ChessMCTS(
         env=env,
-        simulation_limit=200,  # Run up to 200 simulations
-        time_limit=10.0  # Limit each move decision to 10 seconds
+        simulation_limit=500,  # Run up to 200 simulations
+        time_limit=20.0  # Limit each move decision to 10 seconds
     )
     
     # Make some moves
-    for _ in range(10):
+    for _ in range(100):
         if env.board.is_game_over():
             break
             
@@ -310,6 +302,10 @@ def test_mcts():
             print("Board after move:")
             print(env.render())
             print(f"Evaluation: {info['evaluation']:.2f}")
+
+            env.step(np.random.choice(env.get_legal_actions()))
+            print(env.render())
+            print(env.evaluate_position())
             
             if done:
                 print("Game over!")
