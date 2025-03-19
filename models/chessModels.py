@@ -7,7 +7,6 @@ from typing import Dict, Optional, List, Tuple, Any
 import argparse
 import os
 from ChessEnv import ChessEnv
-# ------ Simple Material Evaluator ------
 
 class SimpleMaterialEvaluator:
     """Simple material counting evaluator as fallback when CNN is not available"""
@@ -565,6 +564,120 @@ class ChessMCTSCNN:
         # Stats counters
         self.policy_fallbacks = 0
         self.total_policy_calls = 0
+
+    def predict(self, board: chess.Board) -> float:
+        """
+        Evaluate a chess position using Monte Carlo Tree Search with CNN policy.
+        
+        Args:
+            board: Chess board position to evaluate
+            
+        Returns:
+            float: Evaluation score from white's perspective:
+                - Positive values indicate advantage for white
+                - Negative values indicate advantage for black
+                - Values typically range from -5.0 to 5.0
+        """
+        # Return immediately if game is over
+        if board.is_game_over():
+            outcome = board.outcome()
+            if outcome is None:
+                return 0.0  # Draw
+            elif outcome.winner == chess.WHITE:
+                return 5.0  # White wins
+            else:
+                return -5.0  # Black wins
+        
+        # Store original time limit to restore later
+        original_time_limit = self.time_limit
+        original_simulation_limit = self.simulation_limit
+        
+        # Use reduced parameters for position evaluation
+        self.time_limit = min(self.time_limit, 1.0)  # Max 1 second for evaluation
+        self.simulation_limit = min(self.simulation_limit, 200)  # Max 200 simulations
+        
+        # Temporarily disable debug output
+        original_debug = self.debug
+        self.debug = False
+        
+        # Create a temporary root node
+        temp_root = MCTSNode(board)
+        temp_root.prior_probs = self.get_policy_priors(board)
+        
+        # Run limited MCTS search
+        start_time = time.time()
+        num_simulations = 0
+        
+        while (num_simulations < self.simulation_limit and 
+            time.time() - start_time < self.time_limit):
+            
+            # Selection
+            node = temp_root
+            while not node.is_terminal() and node.is_fully_expanded():
+                node = self.select_child(node)
+            
+            # Expansion
+            if not node.is_terminal():
+                expanded_node = self.expand(node)
+                if expanded_node is not None:
+                    node = expanded_node
+            
+            # Simulation
+            result = self._policy_simulation(node.board)
+            
+            # Backpropagation
+            while node is not None:
+                node.update(result)
+                node = node.parent
+            
+            num_simulations += 1
+        
+        # Calculate evaluation from simulation results
+        if not temp_root.children:
+            # No simulations completed, use evaluator if available
+            if self.evaluator is not None and hasattr(self.evaluator, 'predict'):
+                eval_score = self.evaluator.predict(board)
+            else:
+                # Default to material evaluation
+                eval_score = SimpleMaterialEvaluator().predict(board)
+            
+            # Restore original parameters
+            self.time_limit = original_time_limit
+            self.simulation_limit = original_simulation_limit
+            self.debug = original_debug
+            
+            return eval_score
+        
+        # Calculate weighted average of child values
+        total_visits = sum(child.visits for child in temp_root.children.values())
+        if total_visits == 0:
+            # Restore original parameters
+            self.time_limit = original_time_limit
+            self.simulation_limit = original_simulation_limit
+            self.debug = original_debug
+            
+            return 0.0
+        
+        # Calculate evaluation from white's perspective
+        white_eval = 0.0
+        for move, child in temp_root.children.items():
+            if child.visits > 0:
+                # Win ratio from white's perspective
+                white_win_ratio = child.results[chess.WHITE] / child.visits
+                black_win_ratio = child.results[chess.BLACK] / child.visits
+                
+                # Convert to evaluation score (scale from -5 to 5)
+                move_eval = (white_win_ratio - black_win_ratio) * 5.0
+                
+                # Weight by visit count
+                white_eval += move_eval * (child.visits / total_visits)
+        
+        # Restore original parameters
+        self.time_limit = original_time_limit
+        self.simulation_limit = original_simulation_limit
+        self.debug = original_debug
+        
+        return white_eval
     
     def get_policy_priors(self, board: chess.Board) -> Dict[chess.Move, float]:
         """
@@ -1398,281 +1511,6 @@ class ChessTournament:
         for (agent1_name, agent2_name), result in self.results.items():
             print(f"{agent1_name} vs {agent2_name}: +{result['wins']} -{result['losses']} ={result['draws']} ({result['points']} points)")
 
-
-# ------ Monte Carlo Tree Search with CNN ------
-
-class ChessMCTSCNN:
-    """Monte Carlo Tree Search with CNN policy network."""
-    def __init__(self, evaluator=None, exploration_weight=1.0, 
-                 simulation_limit=500, time_limit=5.0, max_depth=50):
-        self.evaluator = evaluator  # ChessCNN instance
-        self.exploration_weight = exploration_weight
-        self.simulation_limit = simulation_limit
-        self.time_limit = time_limit
-        self.max_depth = max_depth  # Max depth for simulations
-        self.root = None
-        
-        # Debug info
-        self.debug = True  # Set to False to disable debug prints
-    
-    def get_policy_priors(self, board: chess.Board) -> Dict[chess.Move, float]:
-        """
-        Get move probabilities from CNN evaluator with improved handling
-        """
-        start_time = time.time()
-        legal_moves = list(board.legal_moves)
-        if not legal_moves:
-            return {}
-            
-        move_probs = {}
-        
-        # If we have an evaluator, use it to evaluate each move
-        if self.evaluator is not None:
-            # Make a copy of the board for evaluations
-            board_copy = board.copy()
-            
-            # Evaluate each move
-            move_evals = []
-            for move in legal_moves:
-                # Make the move
-                board_copy.push(move)
-                
-                try:
-                    # Evaluate the resulting position - IMPORTANT: negate for opponent's perspective
-                    eval_score = -self.evaluator.predict(board_copy)
-                    move_evals.append((move, eval_score))
-                except Exception as e:
-                    # Log error but continue with default value
-                    if self.debug:
-                        print(f"Error evaluating move {move}: {e}")
-                    move_evals.append((move, 0))
-                
-                # Unmake the move
-                board_copy.pop()
-                
-                # Check for timeout
-                if time.time() - start_time > 3:  # Increased timeout for more reliable evaluations !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                    if self.debug:
-                        print("Policy prior calculation timeout")
-                    break
-            
-            # If we evaluated at least some moves, use softmax to convert to probabilities
-            if move_evals:
-                evals = np.array([e for _, e in move_evals])
-                
-                # For numerical stability
-                evals = evals - np.max(evals)
-                
-                # Lower temperature (0.3) for more deterministic selection
-                temperature = 0.3
-                exps = np.exp(evals / temperature)
-                probs = exps / np.sum(exps)
-                
-                # Assign probabilities to moves
-                for i, (move, _) in enumerate(move_evals):
-                    move_probs[move] = float(probs[i])
-                
-                # Fill in any moves that weren't evaluated
-                evaluated_moves = {m for m, _ in move_evals}
-                for move in legal_moves:
-                    if move not in evaluated_moves:
-                        move_probs[move] = 0.01  # Small non-zero probability
-            else:
-                # Default to uniform distribution if no evaluations
-                prob = 1.0 / len(legal_moves)
-                for move in legal_moves:
-                    move_probs[move] = prob
-        else:
-            # No evaluator, use uniform distribution
-            prob = 1.0 / len(legal_moves)
-            for move in legal_moves:
-                move_probs[move] = prob
-        
-        # Normalize probabilities
-        total_prob = sum(move_probs.values())
-        if total_prob > 0:
-            for move in move_probs:
-                move_probs[move] /= total_prob
-        
-        return move_probs
-    
-    def select_child(self, node: MCTSNode) -> MCTSNode:
-        """
-        Select child node using corrected PUCT formula
-        """
-        if not node.children:
-            raise ValueError("Cannot select child from node with no children")
-        
-        # PUCT formula: Q(s,a) + c_puct * P(s,a) * sqrt(sum_b N(s,b)) / (1 + N(s,a))
-        c_puct = self.exploration_weight
-        total_visits = max(1, sum(child.visits for child in node.children.values()))
-        
-        def puct_score(child):
-            # Exploitation term (Q value) - perspective correction
-            if child.visits == 0:
-                q_value = 0
-            else:
-                # Important: Use the perspective of the player to move in the parent node
-                if node.board.turn == chess.WHITE:
-                    q_value = child.results[chess.WHITE] / child.visits
-                else:
-                    q_value = child.results[chess.BLACK] / child.visits
-            
-            # Exploration term with policy prior
-            move = child.move
-            prior_prob = node.prior_probs.get(move, 1.0 / max(1, len(node.children)))
-            u_value = c_puct * prior_prob * math.sqrt(total_visits) / (1 + child.visits)
-            
-            return q_value + u_value
-        
-        best_child = max(node.children.values(), key=puct_score)
-        return best_child
-    
-    def expand(self, node: MCTSNode) -> Optional[MCTSNode]:
-        """
-        Expand node by adding a child, with move selection informed by CNN policy.
-        """
-        if not node.untried_moves:
-            return None
-        
-        # Get policy priors if not already calculated
-        if not node.prior_probs:
-            node.prior_probs = self.get_policy_priors(node.board)
-        
-        # Choose moves with probability proportional to policy network output
-        if node.prior_probs:
-            untried_probs = {m: node.prior_probs.get(m, 0.01) for m in node.untried_moves}
-            total = sum(untried_probs.values())
-            if total > 0:  # Normalize
-                probs = [untried_probs[m]/total for m in node.untried_moves]
-                move = np.random.choice(node.untried_moves, p=probs)
-            else:
-                move = np.random.choice(node.untried_moves)
-        else:
-            move = np.random.choice(node.untried_moves)
-        
-        # Remove the chosen move from untried moves
-        node.untried_moves.remove(move)
-        
-        # Create new board state
-        new_board = node.board.copy()
-        new_board.push(move)
-        
-        # Create and link the new child node
-        child = MCTSNode(new_board, parent=node, move=move)
-        node.children[move] = child
-        
-        return child
-    
-    def _policy_simulation(self, board: chess.Board) -> Dict[chess.Color, float]:
-        """
-        Run a more focused simulation using the policy network
-        """
-        # For terminal nodes, return the actual game result
-        if board.is_game_over():
-            outcome = board.outcome()
-            if outcome is None:  # Draw
-                return {chess.WHITE: 0.5, chess.BLACK: 0.5, 'draw': 1.0}
-            elif outcome.winner == chess.WHITE:
-                return {chess.WHITE: 1.0, chess.BLACK: 0.0, 'draw': 0.0}
-            else:  # Black wins
-                return {chess.WHITE: 0.0, chess.BLACK: 1.0, 'draw': 0.0}
-        
-        # For non-terminal nodes, evaluate with the neural network if available
-        if self.evaluator is not None and hasattr(self.evaluator, 'predict'):
-            try:
-                # Get network evaluation (scaled to [0,1] range)
-                evaluation = self.evaluator.predict(board)
-                
-                # Scale to win probability for white (between 0 and 1)
-                white_win_prob = min(max((evaluation + 10) / 20, 0), 1)
-                
-                # Create result dictionary
-                return {
-                    chess.WHITE: white_win_prob,
-                    chess.BLACK: 1 - white_win_prob,
-                    'draw': 0.0
-                }
-            except Exception as e:
-                if self.debug:
-                    print(f"Error in simulation evaluation: {e}")
-                # Fall back to a balanced result on error
-                return {chess.WHITE: 0.5, chess.BLACK: 0.5, 'draw': 0.0}
-        else:
-            # No evaluator, return balanced result
-            return {chess.WHITE: 0.5, chess.BLACK: 0.5, 'draw': 0.0}
-    
-    def search(self, board: chess.Board) -> chess.Move:
-        """
-        Perform CNN-enhanced MCTS with optimized search
-        """
-        if self.debug:
-            print(f"Starting CNN-MCTS search with simulation_limit={self.simulation_limit}, time_limit={self.time_limit}s")
-        
-        # Initialize the root node
-        self.root = MCTSNode(board)
-        
-        # Set up timing variables
-        start_time = time.time()
-        num_simulations = 0
-        
-        # Get policy priors for the root node
-        self.root.prior_probs = self.get_policy_priors(board)
-        
-        # Run simulations until we hit our limits
-        while (num_simulations < self.simulation_limit and 
-            time.time() - start_time < self.time_limit):
-            
-            # Phase 1: Selection
-            node = self.root
-            while not node.is_terminal() and node.is_fully_expanded():
-                node = self.select_child(node)
-            
-            # Phase 2: Expansion
-            if not node.is_terminal():
-                expanded_node = self.expand(node)
-                if expanded_node is not None:
-                    node = expanded_node
-            
-            # Phase 3: Simulation/Evaluation
-            result = self._policy_simulation(node.board)
-            
-            # Phase 4: Backpropagation
-            while node is not None:
-                node.update(result)
-                node = node.parent
-            
-            num_simulations += 1
-        
-        # Choose the best move
-        if not self.root.children:
-            # No simulations completed, return random move
-            legal_moves = list(board.legal_moves)
-            if legal_moves:
-                return random.choice(legal_moves)
-            return None
-        
-        # PRIMARY METHOD: Select move with highest visit count
-        best_move = max(self.root.children.items(), key=lambda item: item[1].visits)[0]
-        
-        # Debug output
-        if self.debug:
-            print(f"Completed {num_simulations} simulations in {time.time() - start_time:.2f}s")
-            print(f"Selected move: {best_move}")
-            
-            # Print top moves
-            sorted_moves = sorted(
-                self.root.children.items(),
-                key=lambda item: item[1].visits,
-                reverse=True
-            )
-            print("Top moves:")
-            for move, node in sorted_moves[:3]:
-                win_rate = node.results[board.turn] / node.visits if node.visits > 0 else 0
-                print(f"  {move}: {node.visits} visits, win%: {win_rate*100:.1f}%")
-        
-        return best_move
-    
 
 # ------ Main Function ------
 

@@ -11,10 +11,10 @@ import numpy as np
 import io
 import cairosvg
 from ChessEnv import ChessEnv
-from testCNN import ChessCNN  # Assuming this is your CNN class
-from testCNN import MCTSNode  # Assuming this is your MCTS node class
-from testCNN import MCTSCNNAgent 
-from testCNN import ChessMCTSCNN  # Adjust this import based on your actual file structure
+from models.chessModels import ChessCNN  # Assuming this is your CNN class
+from models.chessModels import MCTSNode  # Assuming this is your MCTS node class
+from models.chessModels import MCTSCNNAgent 
+from models.chessModels import ChessMCTSCNN  # Adjust this import based on your actual file structure
 
 class ChessGUI:
     def __init__(self, width=800, height=600):
