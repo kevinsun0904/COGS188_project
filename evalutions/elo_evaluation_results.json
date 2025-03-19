@@ -1,0 +1,66 @@
+{
+  "results": {
+    "1360": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 5,
+      "score": 0.0,
+      "games": 5,
+      "win_rate": 0.0
+    },
+    "1460": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    },
+    "1560": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    },
+    "1660": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    },
+    "1760": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    },
+    "1860": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    },
+    "1960": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    },
+    "2060": {
+      "wins": 0,
+      "draws": 0,
+      "losses": 0,
+      "score": 0,
+      "games": 0
+    }
+  },
+  "estimated_elo": 1360,
+  "evaluation_parameters": {
+    "time_limit": 2.0,
+    "simulation_limit": 100
+  }
+}

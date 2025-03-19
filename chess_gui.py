@@ -11,9 +11,10 @@ import numpy as np
 import io
 import cairosvg
 from ChessEnv import ChessEnv
-from monte_carlo_with_cnn import ChessCNN  # Assuming this is your CNN class
-from monte_carlo_with_cnn import MCTSNode  # Assuming this is your MCTS node class
-from monte_carlo_with_cnn import ChessMCTS  # Adjust this import based on your actual file structure
+from testCNN import ChessCNN  # Assuming this is your CNN class
+from testCNN import MCTSNode  # Assuming this is your MCTS node class
+from testCNN import MCTSCNNAgent 
+from testCNN import ChessMCTSCNN  # Adjust this import based on your actual file structure
 
 class ChessGUI:
     def __init__(self, width=800, height=600):
@@ -38,12 +39,7 @@ class ChessGUI:
             print(f"Error initializing CNN: {e}")
             self.cnn_evaluator = ChessCNN()  # Placeholder
         
-        self.mcts = ChessMCTS(
-            env=self.chess_env,
-            evaluator=self.cnn_evaluator,
-            simulation_limit=100,
-            time_limit=2.0
-        )
+        self.mcts = MCTSCNNAgent(model_path="chess_cnn_model.h5", simulation_limit=5000, time_limit=60.0)
         
         # Game state
         self.player_color = chess.WHITE  # Human plays white by default
@@ -373,7 +369,7 @@ class ChessGUI:
         if not self.game_over and self.board.turn != self.player_color:
             try:
                 # Get the best move from MCTS
-                best_move = self.mcts.search(self.board)
+                best_move = self.mcts.select_move(self.board)
                 
                 if best_move:
                     # Make the move

@@ -545,15 +545,13 @@ class ChessMCTS:
                      f"(White perspective)")
         
         return best_move
-    
-# Add this class immediately after the ChessMCTS class in your code
 
 # ------ Monte Carlo Tree Search with CNN ------
 
 class ChessMCTSCNN:
     """Monte Carlo Tree Search with CNN policy network."""
     def __init__(self, evaluator=None, exploration_weight=1.0,  # Reduced from 2.0
-                 simulation_limit=500, time_limit=5.0, max_depth=25):
+                 simulation_limit=500, time_limit=5.0, max_depth=50):
         self.evaluator = evaluator  # ChessCNN instance
         self.exploration_weight = exploration_weight
         self.simulation_limit = simulation_limit
@@ -1122,7 +1120,6 @@ class MCTSCNNAgent:
         except Exception as e:
             print(f"CNN evaluator not available: {e}")
             self.evaluator = SimpleMaterialEvaluator()
-            self.name = "MCTS+Material Agent"
         
         # Initialize MCTS with better parameters
         self.mcts = ChessMCTSCNN(
@@ -1131,7 +1128,6 @@ class MCTSCNNAgent:
             simulation_limit=simulation_limit,
             time_limit=time_limit
         )
-    # Add this to your MCTSCNNAgent class if it's missing
     def select_move(self, board):
         """Choose the best move using MCTS search"""
         move = self.mcts.search(board)
@@ -1408,7 +1404,7 @@ class ChessTournament:
 class ChessMCTSCNN:
     """Monte Carlo Tree Search with CNN policy network."""
     def __init__(self, evaluator=None, exploration_weight=1.0, 
-                 simulation_limit=500, time_limit=5.0, max_depth=25):
+                 simulation_limit=500, time_limit=5.0, max_depth=50):
         self.evaluator = evaluator  # ChessCNN instance
         self.exploration_weight = exploration_weight
         self.simulation_limit = simulation_limit

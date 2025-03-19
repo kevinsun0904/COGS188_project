@@ -1,4 +1,5 @@
 import chess
+import chess.svg
 import chess.engine
 import numpy as np
 import time
@@ -8,22 +9,24 @@ import os
 import argparse
 import json
 from pathlib import Path
-
-# Import your AI implementation
+import sys
+sys.path.append('.')
 from ChessEnv import ChessEnv
-from monte_carlo_with_cnn import ChessCNN
-from monte_carlo_with_cnn import ChessMCTS  # Replace with actual import
+from testCNN import ChessCNN
+from testCNN import ChessMCTS
+from testCNN import MCTSCNNAgent 
+from testCNN import MCTSNode
 
 class EloEvaluator:
     """Class to evaluate the ELO rating of a chess AI using Stockfish."""
     
-    def __init__(self, stockfish_path, cnn_model_path=None, time_limit=2.0, simulation_limit=100):
+    def __init__(self, stockfish_path, cnn_model_path=None, time_limit=60.0, simulation_limit=5000):
         """
         Initialize the ELO evaluator.
         
         Args:
             stockfish_path: Path to the Stockfish executable
-            cnn_model_path: Path to your CNN model
+            cnn_model_path: Path to CNN model
             time_limit: Time limit for MCTS search in seconds
             simulation_limit: Maximum number of simulations for MCTS
         """
@@ -37,22 +40,16 @@ class EloEvaluator:
         if not os.path.exists(stockfish_path):
             raise FileNotFoundError(f"Stockfish executable not found at {stockfish_path}")
             
-        # Initialize your AI
+        # Initialize AI
         self.env = ChessEnv(stockfish_path = "/Users/kaust/stockfish/stockfish-windows-x86-64-avx2.exe")
-        self.cnn = ChessCNN(model_path=cnn_model_path)
-        self.mcts_ai = ChessMCTS(
-            env=self.env,
-            evaluator=self.cnn,
-            time_limit=time_limit,
-            simulation_limit=simulation_limit
-        )
+        self.mcts_ai = MCTSCNNAgent(model_path="chess_cnn_model.h5", simulation_limit=5000, time_limit=60.0)
     
     def play_game(self, ai_color, stockfish_elo):
         """
-        Play a game between your AI and Stockfish.
+        Play a game between AI and Stockfish.
         
         Args:
-            ai_color: Color for your AI (chess.WHITE or chess.BLACK)
+            ai_color: Color for AI (chess.WHITE or chess.BLACK)
             stockfish_elo: ELO rating to set for Stockfish
             
         Returns:
@@ -71,9 +68,9 @@ class EloEvaluator:
             # Play until the game is over
             while not board.is_game_over():
                 if board.turn == ai_color:
-                    # Your AI's turn
+                    # AI's turn
                     start_time = time.time()
-                    move = self.mcts_ai.search(board)
+                    move = self.mcts_ai.select_move(board)
                     end_time = time.time()
                     print(f"AI move: {move} (took {end_time - start_time:.2f}s)")
                 else:
@@ -84,6 +81,11 @@ class EloEvaluator:
                 
                 # Make the move
                 board.push(move)
+                svg_content = chess.svg.board(board, size=350)
+    
+                with open("chess_position.svg", 'w') as f:
+                    f.write(svg_content)
+
                 print(board)
                 print("--------------------")
             
@@ -98,7 +100,7 @@ class EloEvaluator:
     
     def evaluate_elo(self, elo_range=(1000, 3000), step=200, games_per_level=10):
         """
-        Evaluate the ELO rating of your AI by playing against Stockfish at different levels.
+        Evaluate the ELO rating of AI by playing against Stockfish at different levels.
         
         Args:
             elo_range: Tuple of (min_elo, max_elo) to test against
@@ -156,7 +158,7 @@ class EloEvaluator:
     
     def estimate_elo(self):
         """
-        Estimate the ELO rating of your AI based on the results.
+        Estimate the ELO rating of AI based on the results.
         
         Returns:
             Estimated ELO rating
