@@ -1108,7 +1108,7 @@ class MCTSCNNAgent:
         
         # Try to load CNN with better error handling
         try:
-            self.evaluator = ChessCNN(model_path)
+            self.evaluator = ChessMCTSCNN(model_path)
             print("Using CNN evaluator")
             
             # Test evaluator
