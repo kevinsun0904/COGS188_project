@@ -11,10 +11,10 @@ from tqdm import tqdm
 import sys
 sys.path.append('.')
 from ChessEnv import ChessEnv
-from testCNN import ChessCNN  
-from testCNN import MCTSNode  
-from testCNN import MCTSCNNAgent 
-from testCNN import ChessMCTSCNN 
+from models.chessModels import ChessCNN  
+from models.chessModels import MCTSNode  
+from models.chessModels import MCTSCNNAgent 
+from models.chessModels import ChessMCTSCNN 
 
 class ChessEvaluator:
     def __init__(self, stockfish_path, low_elo=1400, high_elo=3640, num_games=100, start_row=12000):
