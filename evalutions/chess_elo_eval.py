@@ -12,10 +12,10 @@ from pathlib import Path
 import sys
 sys.path.append('.')
 from ChessEnv import ChessEnv
-from testCNN import ChessCNN
-from testCNN import ChessMCTS
-from testCNN import MCTSCNNAgent 
-from testCNN import MCTSNode
+from models.chessModels import ChessCNN
+from models.chessModels import ChessMCTS
+from models.chessModels import MCTSCNNAgent 
+from models.chessModels import MCTSNode
 
 class EloEvaluator:
     """Class to evaluate the ELO rating of a chess AI using Stockfish."""
